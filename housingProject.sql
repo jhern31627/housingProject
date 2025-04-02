@@ -7,7 +7,7 @@ select *
 FROM housingWork
 
 -------------------------------------------------------------------------------------------------------------------------
----1. Standarcize date 
+---1. Standardize date 
 SELECT 
 	CONVERT(date, SaleDate) as ymd
 FROM housingWork
@@ -267,6 +267,10 @@ SELECT
 	citySplit,
 	SUM(SalePrice) AS cityTotal
 FROM #TempHousingWork
+
+
+
+
 WHERE LandUse = 'SINGLE FAMILY'
 	AND citySplit IS NOT NULL
 GROUP BY citySplit
