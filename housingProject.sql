@@ -1,16 +1,17 @@
-use housingProject
-SELECT * FROM housing
-
+USE housingProject
 
 SELECT * INTO housingWork 
 FROM housing
 
-select * from housingWork
--------------------------------------------------------------------------------------------------------------------------
----Standarcize date 
-SELECT 
-	CONVERT(date, SaleDate) as SalesDate
+select * 
 FROM housingWork
+
+-------------------------------------------------------------------------------------------------------------------------
+---1. Standarcize date 
+SELECT 
+	CONVERT(date, SaleDate) as ymd
+FROM housingWork
+
 
 ALTER TABLE housingWork
 ADD salesDateConvert DATE
@@ -18,41 +19,16 @@ ADD salesDateConvert DATE
 UPDATE housingWork
 SET salesDateConvert = CONVERT(date, SaleDate)
 
--------------------------------------------------------------------------------------------------------------------------
----Replace NULL addresses with Parcel ID and not with same uniqueID
+select * 
+FROM housingWork
 
+
+-------------------------------------------------------------------------------------------------------------------------
+---2. Property Address Split
 SELECT 
-	a.ParcelID,
-	a.PropertyAddress,
-	b.ParcelID,
-	b.PropertyAddress,
-	ISNULL(a.propertyAddress, B.PropertyAddress) AS address
-FROM housingWork a 
-JOIN housingWork b
-	ON a.ParcelID = b.ParcelID
-	AND a.[UniqueID ] != b.[UniqueID ]
-WHERE a.PropertyAddress IS NULL 
-
-UPDATE a
-SET PropertyAddress = ISNULL(a.propertyAddress, B.PropertyAddress)
-FROM housingWork a 
-JOIN housingWork b
-	ON a.ParcelID = b.ParcelID
-	AND a.[UniqueID ] != b.[UniqueID ]
-WHERE a.PropertyAddress IS NULL 
-
--- check
-SELECT * 
+	SUBSTRING(propertyAddress, 1, CHARINDEX(',' , PropertyAddress) -1 ) AS addressPropertySplit,
+	SUBSTRING(propertyAddress, CHARINDEX(',' , PropertyAddress) +1, LEN(propertyAddress)) AS citySplit
 FROM housingWork
-WHERE PropertyAddress is null
-
--------------------------------------------------------------------------------------------------------------------------
----updating property address
-SELECT PropertyAddress,
-	SUBSTRING(PropertyAddress, 1, CHARINDEX(',', propertyAddress) -1 ) AS addressSplit,
-	SUBSTRING(PropertyAddress, CHARINDEX(',', propertyAddress) +1 ,LEN(propertyAddress)) as citySplit
-FROM housingWork
-
 
 ----adding split addrress
 ALTER TABLE housingWork
@@ -68,18 +44,14 @@ ADD citySplit nvarchar(250)
 UPDATE housingWork
 SET citySplit = SUBSTRING(PropertyAddress, CHARINDEX(',', propertyAddress) +1 , LEN(propertyAddress))
 
-SELECT * 
-FROM housingWork
 
 -------------------------------------------------------------------------------------------------------------------------
----owner address
-
-select 
-	PARSENAME(REPLACE(ownerAddress, ',', '.'), 3) AS ownerAddressSplit,
-	PARSENAME(REPLACE(ownerAddress, ',', '.'), 2) AS ownerCitySplit,
-	PARSENAME(REPLACE(ownerAddress, ',', '.'), 1) AS ownerAddressStateSplit
-from housingWork
-
+--3. Split owner address
+	SELECT 
+		PARSENAME(REPLACE(ownerAddress, ',' , '.'), 3) AS address,
+		PARSENAME(REPLACE(ownerAddress,',', '.' ), 2) AS city,
+		PARSENAME(REPLACE(ownerAddress, ',', '.'), 1) AS state
+	FROM housingWork
 
 --Split address
 ALTER TABLE housingWork
@@ -104,26 +76,28 @@ ADD ownerAddressStateSplit nvarChar(250)
 UPDATE housingWork
 SET ownerAddressStateSplit = PARSENAME(REPLACE(ownerAddress, ',', '.'), 1)
 
-
 -------------------------------------------------------------------------------------------------------------------------
----Vaccants
-
-SELECT DISTINCT
+--4. Fix Y --> Yes and N --> No
+--checking count of yes no
+SELECT 
 	SoldAsVacant,
-	COUNT(soldAsVacant) as c
-FROM housingWork
-GROUP BY SoldAsVacant
-ORDER BY c DESC
+	COUNT(soldAsVacant) AS ynCount
+FROM  housingWork
+GROUP BY SoldAsVacant 
+ORDER BY SoldAsVacant DESC
 
-
-SELECT SoldAsVacant,
+---convert y/n
+SELECT 
+	SoldAsVacant,
 	CASE 
 		WHEN SoldAsVacant = 'Y' THEN 'Yes'
 		WHEN SoldAsVacant = 'N' THEN 'No'
 		ELSE SoldAsVacant
-	END 
+	END AS yesNo
 FROM housingWork
+GROUP BY SoldAsVacant
 
+--Update the table with yes and no
 UPDATE housingWork
 SET SoldAsVacant = 
 	CASE 
@@ -132,8 +106,10 @@ SET SoldAsVacant =
 		ELSE SoldAsVacant
 	END 
 
+
+
 -------------------------------------------------------------------------------------------------------------------------
----Checking/ removing duplicates
+--5. Checking/ removing duplicates
 WITH rowNum_CTE AS (
 SELECT *,
 	ROW_NUMBER() OVER(PARTITION BY parcelId, propertyAddress, salePrice, saleDate, legalReference ORDER BY uniqueId) AS row_num
@@ -144,33 +120,9 @@ FROM rowNum_CTE
 where row_num > 1
 ORDER BY SalePrice DESC
 
---DELETE
---FROM rowNum_CTE
---where row_num > 1
-
-
-
---removing unused column
-ALTER TABLE housingWork
-DROP COLUMN 
-	saleDate,
-	ownerAddress,
-	taxdistrict, 
-	PropertyAddress
-
-
-SELECT DISTINCT citySplit
-FROM housingWork
-
-USE housingProject
-
-
-
-
-
 
 -------------------------------------------------------------------------------------------------------------------------
---1) what land use has highest salesPrice
+--6) what landuse has highest salesPrice
 SELECT TOP 10
 	landuse,
 	SUM(salePrice) as salePriceTotal
@@ -179,18 +131,15 @@ WHERE SoldAsVacant != 'Yes'
 GROUP BY LandUse
 ORDER BY salePriceTotal DESC
 
-SELECT distinct datepart(year,salesDateConvert)
-FROM housingWork
-
-
---2) Highest land use per yr
+-------------------------------------------------------------------------------------------------------------------------
+--7) What is the highest land usage over the years
 WITH rankLandUse AS (
 	SELECT 
 		DATEPART(year, salesDateConvert) AS yr,
 		LandUse,
 		SUM(salePrice) as landPriceTotal,
 		ROW_NUMBER () OVER (PARTITION BY DATEPART(year, salesDateConvert) ORDER BY SUM(salePrice) DESC) as row_num
-	FROM NASHhousingWork
+	FROM housingWork
 	WHERE SoldAsVacant != 'Yes'
 	GROUP BY DATEPART(year, salesDateConvert), LandUse, SoldAsVacant
 	)
@@ -201,170 +150,124 @@ SELECT
 FROM rankLandUse
 WHERE row_num = 1
 
------------------------------------drill down to why 2015 different
+
+-------------------------------------------------------------------------------------------------------------------------
+-----------------------------------7a. Checking why RESIDENTIAL CONDO is the highest in 2015
 SELECT * FROM housingWork
 WHERE DATEPART(YEAR, salesDateConvert) = 2015
 AND LandUse = 'RESIDENTIAL CONDO'
 ORDER BY SalePrice desc
 
---min/max total
+
 SELECT 
+	addressSplit,
 	LandUse,
 	SUM(SalePrice) as total,
 	MIN(salePrice) as min,
 	MAX(salePrice) as max,
 	COUNT(landUse) as totalbought
-FROM NASHhousingWork
+FROM housingWork
 WHERE DATEPART(YEAR, salesDateConvert) = 2015
 	AND LandUse IN ('SINGLE FAMILY', 'RESIDENTIAL CONDO')
+GROUP BY LandUse, addressSplit
+
+
+-------------------------------------------------------------------------------------------------------------------------
+--8. Remove Duplicates that have base on LandUse, salesDateConvert, SalePrice, LegalReference/ columns needed
+--Put into temptable
+
+CREATE TABLE #TempHousingWork (
+    UniqueID INT,
+    parcelId VARCHAR(50),
+    LandUse VARCHAR(100),
+    addressSplit VARCHAR(255),
+    citySplit VARCHAR(100),
+    salesDateConvert DATE,
+    SalePrice INT, 
+    LegalReference VARCHAR(255),
+    SoldAsVacant VARCHAR(10),
+    ownerAddressSplit VARCHAR(255),
+    ownerCitySplit VARCHAR(100),
+    ownerAddressStateSplit VARCHAR(50)
+)
+
+INSERT INTO #TempHousingWork
+SELECT 
+    UniqueID,
+    parcelId,
+    LandUse,
+    addressSplit,
+    citySplit,
+    salesDateConvert,
+    SalePrice,  
+    LegalReference,
+    SoldAsVacant,
+    ownerAddressSplit,
+    ownerCitySplit,
+    ownerAddressStateSplit
+FROM housingWork;
+
+ALTER TABLE #TempHousingWork
+ALTER COLUMN SalePrice BIGINT
+
+select * from #TempHousingWork
+
+
+--8a. Removing duplicates (base on LandUse, salesDateConvert, SalePrice, LegalReference)
+WITH singleValue AS (
+    SELECT *,
+           ROW_NUMBER() OVER (PARTITION BY LandUse, salesDateConvert, SalePrice, LegalReference ORDER BY UniqueID) AS row_numRank
+    FROM #TempHousingWork
+)
+DELETE t
+FROM #TempHousingWork t
+JOIN singleValue sv ON t.UniqueID = sv.UniqueID
+WHERE sv.row_numRank > 1; ;
+
+SELECT * from #TempHousingWork
+
+
+
+-------------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------------------------------------
+
+--9. rechecking what landuse has highest salesPrice
+SELECT TOP 10
+	landuse,
+	SUM(CAST(salePrice AS bigint)) as salePriceTotal
+FROM #TempHousingWork
+WHERE SoldAsVacant != 'Yes'
 GROUP BY LandUse
-
-
-
-select * from NASHhousingWork
-
-
-
-
-
-
-
-
-
-
-
-
-
-
---------------------------------------------------------------------------------------------------------------------
-WITH DuplicateCheck AS (
-    SELECT 
-        LandUse, 
-        SalePrice, 
-        LegalReference, 
-        ROW_NUMBER() OVER (PARTITION BY LandUse, SalePrice, LegalReference ORDER BY (SELECT NULL)) AS row_rank
-    FROM housingWork
-)
-SELECT *
-FROM DuplicateCheck
-WHERE row_rank > 1;
-
-SELECT *
-FROM housing
-WHERE LegalReference = '20160505-0044702'
-
-
-WITH Deduplicated AS (
-    SELECT 
-        LandUse, 
-        SalePrice, 
-        LegalReference, 
-        ROW_NUMBER() OVER (PARTITION BY LandUse, SalePrice, LegalReference ORDER BY LegalReference) AS row_num
-    FROM housingWork
-)
-SELECT LandUse, SalePrice, LegalReference
-FROM Deduplicated
-WHERE row_num = 1;
---- avg sales price for single family 
-
--- what city has highest 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
------------------------UNUSED CODE 
-
---SELECT * FROM housingWork
-
---SELECT * FROM housingWork
---WHERE DATEPART(YEAR, salesDateConvert) = 2015
---AND LandUse = 'RESIDENTIAL CONDO'
---ORDER BY SalePrice desc
-
-
-
---CREATE TABLE #housingCombine (
---	landUse varchar(100),
---	SaleDateConcert DATE,
---	addressSplit,
---	citySplit
-
---WITH singleValue AS (
---	SELECT *,
---	ROW_NUMBER () OVER (PARTITION BY LandUse, salesDateConvert, SalePrice, LegalReference ORDER BY UniqueID) AS row_numRank
---	FROM housingWork
---)
-
---SELECT * 
---FROM singleValue
---WHERE row_numRank > 1
---ORDER BY row_numRank DESC
-
---SELECT 
---	[UniqueID ],
---	parcelId,
---	LandUse,
---	addressSplit,
---	citySplit,
---	salesDateConvert,
---	SalePrice,
---	LegalReference,
---	SoldAsVacant,
---	ownerAddressSplit,
---	ownerCitySplit,
---	ownerAddressStateSplit,
---FROM housingWork
-
-
-
-
-use housingProject
-select * from housing
-
-SELECT * FROM NASHhousingWork
-WHERE DATEPART(YEAR, salesDateConvert) = 2015
-AND LandUse = 'RESIDENTIAL CONDO'
-ORDER BY SalePrice desc
-
---------------------------------------------------------------------------------------------------------------------
---SELECT * 
---FROM singleValue
---WHERE row_numRank = 1
---ORDER BY row_numRank DESC
-
---UPDATE #TempHousingWork
---SET = 
---WITH singleValue AS (
---	SELECT *,
---	ROW_NUMBER () OVER (PARTITION BY LandUse, salesDateConvert, SalePrice, LegalReference ORDER BY UniqueID) AS row_numRank
---	FROM #TempHousingWork
---)
-
---SELECT * 
---FROM singleValue
---WHERE row_numRank = 1
---ORDER BY row_numRank DESC
+ORDER BY salePriceTotal DESC
+
+
+--10. Highest land use per yr
+WITH rankLandUse AS (
+	SELECT 
+		DATEPART(year, salesDateConvert) AS yr,
+		LandUse,
+		SUM(CAST(salePrice AS bigint)) as landPriceTotal,
+		AVG(CAST(salePrice AS bigint)) as avgPriceTotal,
+		ROW_NUMBER () OVER (PARTITION BY DATEPART(year, salesDateConvert) ORDER BY SUM(CAST(salePrice AS bigint)) DESC) as row_num
+	FROM #TempHousingWork
+	WHERE SoldAsVacant != 'Yes'
+	GROUP BY DATEPART(year, salesDateConvert), LandUse, SoldAsVacant
+	)
+SELECT 
+	yr,
+	LandUse,
+	landPriceTotal,
+	avgPriceTotal
+FROM rankLandUse
+WHERE row_num = 1
+
+--11. what state has the highest salePrice
+SELECT 
+	citySplit,
+	SUM(SalePrice) AS cityTotal
+FROM #TempHousingWork
+WHERE LandUse = 'SINGLE FAMILY'
+	AND citySplit IS NOT NULL
+GROUP BY citySplit
+ORDER BY cityTotal desc
